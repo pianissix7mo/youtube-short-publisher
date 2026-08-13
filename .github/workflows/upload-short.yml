@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
           test -s "inbox/short.mp4"
           test -s "inbox/metadata.json"
-          test -s "assets/music/Just Stay - Aakash Gandhi.mp3"
+          test -s "assets/music/background.mp3"
 
           python -m json.tool inbox/metadata.json > /dev/null
 
@@ -84,7 +84,7 @@ jobs:
           mkdir -p output
 
           INPUT="inbox/short.mp4"
-          MUSIC="assets/music/Just Stay - Aakash Gandhi.mp3"
+          MUSIC="assets/music/background.mp3"
           OUTPUT="output/short_with_music.mp4"
 
           duration=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$INPUT")
