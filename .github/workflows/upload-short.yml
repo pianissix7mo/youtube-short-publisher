@@ -112,7 +112,7 @@ jobs:
               raise RuntimeError(f"Invalid Shorts duration: {duration:.3f}s")
           PY
 
-      - name: Add fixed background music without re-encoding video
+      - name: Replace input audio with fixed background music without re-encoding video
         shell: bash
         run: |
           set -euo pipefail
@@ -123,29 +123,16 @@ jobs:
           OUTPUT="output/short_with_music.mp4"
 
           duration=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$INPUT")
-          has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "$INPUT" || true)
+          echo "Discarding all input audio and using only fixed background music."
 
-          if [ -n "$has_audio" ]; then
-            echo "Input already has audio; mixing it with background music."
-            ffmpeg -hide_banner -loglevel error -y \
-              -i "$INPUT" \
-              -stream_loop -1 -i "$MUSIC" \
-              -filter_complex "[1:a]volume=0.22[bg];[0:a][bg]amix=inputs=2:duration=longest:dropout_transition=2[a]" \
-              -map 0:v:0 -map "[a]" \
-              -c:v copy -c:a aac -b:a 192k \
-              -t "$duration" -movflags +faststart \
-              "$OUTPUT"
-          else
-            echo "Input is silent; adding fixed background music."
-            ffmpeg -hide_banner -loglevel error -y \
-              -i "$INPUT" \
-              -stream_loop -1 -i "$MUSIC" \
-              -map 0:v:0 -map 1:a:0 \
-              -c:v copy -c:a aac -b:a 192k \
-              -filter:a "volume=0.35" \
-              -t "$duration" -movflags +faststart \
-              "$OUTPUT"
-          fi
+          ffmpeg -hide_banner -loglevel error -y \
+            -i "$INPUT" \
+            -stream_loop -1 -i "$MUSIC" \
+            -map 0:v:0 -map 1:a:0 \
+            -c:v copy -c:a aac -b:a 192k \
+            -filter:a "volume=0.35" \
+            -t "$duration" -movflags +faststart \
+            "$OUTPUT"
 
       - name: Validate final MP4
         run: |
