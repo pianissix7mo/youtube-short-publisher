@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,9 +45,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t videos < <(find inbox -maxdepth 1 -type f -iname '*.mp4' -print | sort)
+          if [ "${{ github.event_name }}" = "push" ]; then
+            mapfile -t candidates < <(git diff --name-only HEAD^ HEAD -- 'inbox/*.mp4' | sort -u)
+            videos=()
+            for candidate in "${candidates[@]}"; do
+              if [ -f "$candidate" ]; then
+                videos+=("$candidate")
+              fi
+            done
+          else
+            mapfile -t videos < <(find inbox -maxdepth 1 -type f -iname '*.mp4' -print | sort)
+          fi
+
           if [ "${#videos[@]}" -ne 1 ]; then
-            echo "Expected exactly one MP4 in inbox/, found ${#videos[@]}"
+            echo "Expected exactly one newly added/modified MP4, found ${#videos[@]}"
             printf '%s\n' "${videos[@]:-}"
             exit 1
           fi
@@ -62,9 +75,9 @@ jobs:
 
           python - <<'PY'
           import json
+          import os
           import subprocess
           from pathlib import Path
-          import os
 
           metadata = json.loads(Path("inbox/metadata.json").read_text(encoding="utf-8"))
           title = str(metadata.get("title", "")).strip()
