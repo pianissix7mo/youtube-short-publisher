@@ -1,0 +1,154 @@
+name: Publish YouTube Short
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "inbox/short.mp4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: youtube-short-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate input files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "inbox/short.mp4"
+          test -s "inbox/metadata.json"
+          test -s "assets/music/Just Stay - Aakash Gandhi.mp3"
+
+          python -m json.tool inbox/metadata.json > /dev/null
+
+          python - <<'PY'
+          import json
+          import subprocess
+
+          path = "inbox/short.mp4"
+          probe = json.loads(subprocess.check_output([
+              "ffprobe", "-v", "error",
+              "-select_streams", "v:0",
+              "-show_entries", "stream=width,height,codec_name,pix_fmt:format=duration",
+              "-of", "json", path,
+          ], text=True))
+
+          if not probe.get("streams"):
+              raise RuntimeError("No video stream found")
+
+          stream = probe["streams"][0]
+          width = int(stream["width"])
+          height = int(stream["height"])
+          duration = float(probe["format"]["duration"])
+          codec = str(stream.get("codec_name", "unknown"))
+          pix_fmt = str(stream.get("pix_fmt", "unknown"))
+
+          print(f"Input: {width}x{height}, {duration:.3f}s, {codec}, {pix_fmt}")
+          if width >= height:
+              raise RuntimeError(f"Input is not portrait: {width}x{height}")
+          if duration <= 0 or duration > 180:
+              raise RuntimeError(f"Invalid Shorts duration: {duration:.3f}s")
+          PY
+
+      - name: Add fixed background music without re-encoding video
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+
+          INPUT="inbox/short.mp4"
+          MUSIC="assets/music/Just Stay - Aakash Gandhi.mp3"
+          OUTPUT="output/short_with_music.mp4"
+
+          duration=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$INPUT")
+          has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "$INPUT" || true)
+
+          if [ -n "$has_audio" ]; then
+            echo "Input already has audio; mixing it with background music."
+            ffmpeg -hide_banner -loglevel error -y \
+              -i "$INPUT" \
+              -stream_loop -1 -i "$MUSIC" \
+              -filter_complex "[1:a]volume=0.22[bg];[0:a][bg]amix=inputs=2:duration=longest:dropout_transition=2[a]" \
+              -map 0:v:0 -map "[a]" \
+              -c:v copy -c:a aac -b:a 192k \
+              -t "$duration" -movflags +faststart \
+              "$OUTPUT"
+          else
+            echo "Input is silent; adding fixed background music."
+            ffmpeg -hide_banner -loglevel error -y \
+              -i "$INPUT" \
+              -stream_loop -1 -i "$MUSIC" \
+              -map 0:v:0 -map 1:a:0 \
+              -c:v copy -c:a aac -b:a 192k \
+              -filter:a "volume=0.35" \
+              -t "$duration" -movflags +faststart \
+              "$OUTPUT"
+          fi
+
+      - name: Validate final MP4
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          path = Path("output/short_with_music.mp4")
+          if not path.is_file() or path.stat().st_size == 0:
+              raise RuntimeError("Final MP4 was not created")
+
+          probe = json.loads(subprocess.check_output([
+              "ffprobe", "-v", "error", "-show_streams", "-show_format",
+              "-of", "json", str(path),
+          ], text=True))
+
+          videos = [s for s in probe["streams"] if s.get("codec_type") == "video"]
+          audios = [s for s in probe["streams"] if s.get("codec_type") == "audio"]
+          if len(videos) != 1:
+              raise RuntimeError(f"Expected one video stream, got {len(videos)}")
+          if len(audios) != 1:
+              raise RuntimeError(f"Expected one audio stream, got {len(audios)}")
+
+          v = videos[0]
+          a = audios[0]
+          duration = float(probe["format"]["duration"])
+          print(
+              f"Final: {v['width']}x{v['height']}, {duration:.3f}s, "
+              f"video={v.get('codec_name')}, audio={a.get('codec_name')}"
+          )
+          PY
+
+      - name: Upload Short to YouTube
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          VIDEO_PATH: output/short_with_music.mp4
+          METADATA_PATH: inbox/metadata.json
+        run: python scripts/youtube_upload.py
