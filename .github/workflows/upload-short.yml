@@ -51,6 +51,7 @@ jobs:
           fi
 
           INPUT_VIDEO="${videos[0]}"
+          export INPUT_VIDEO
           echo "INPUT_VIDEO=$INPUT_VIDEO" >> "$GITHUB_ENV"
           echo "Using input video: $INPUT_VIDEO"
 
@@ -63,6 +64,7 @@ jobs:
           import json
           import subprocess
           from pathlib import Path
+          import os
 
           metadata = json.loads(Path("inbox/metadata.json").read_text(encoding="utf-8"))
           title = str(metadata.get("title", "")).strip()
@@ -72,7 +74,6 @@ jobs:
           if not description or description.upper() == "REPLACE ME":
               raise RuntimeError("metadata.json description is still a placeholder")
 
-          import os
           path = os.environ["INPUT_VIDEO"]
           probe = json.loads(subprocess.check_output([
               "ffprobe", "-v", "error",
