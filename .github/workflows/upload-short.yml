@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: youtube-short-publisher
@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   publish:
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[cleanup-short]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -174,3 +175,14 @@ jobs:
           VIDEO_PATH: output/short_with_music.mp4
           METADATA_PATH: inbox/metadata.json
         run: python scripts/youtube_upload.py
+
+      - name: Remove uploaded MP4 from inbox
+        if: ${{ success() && github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -- "$INPUT_VIDEO"
+          git commit -m "[cleanup-short] Remove uploaded Short"
+          git push
