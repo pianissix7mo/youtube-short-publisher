@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "inbox/short.mp4"
+      - "inbox/*.mp4"
   workflow_dispatch:
 
 permissions:
@@ -38,21 +38,42 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Validate input files
+      - name: Resolve and validate input files
         shell: bash
         run: |
           set -euo pipefail
-          test -s "inbox/short.mp4"
+
+          mapfile -t videos < <(find inbox -maxdepth 1 -type f -iname '*.mp4' -print | sort)
+          if [ "${#videos[@]}" -ne 1 ]; then
+            echo "Expected exactly one MP4 in inbox/, found ${#videos[@]}"
+            printf '%s\n' "${videos[@]:-}"
+            exit 1
+          fi
+
+          INPUT_VIDEO="${videos[0]}"
+          echo "INPUT_VIDEO=$INPUT_VIDEO" >> "$GITHUB_ENV"
+          echo "Using input video: $INPUT_VIDEO"
+
+          test -s "$INPUT_VIDEO"
           test -s "inbox/metadata.json"
           test -s "assets/music/background.mp3"
-
           python -m json.tool inbox/metadata.json > /dev/null
 
           python - <<'PY'
           import json
           import subprocess
+          from pathlib import Path
 
-          path = "inbox/short.mp4"
+          metadata = json.loads(Path("inbox/metadata.json").read_text(encoding="utf-8"))
+          title = str(metadata.get("title", "")).strip()
+          description = str(metadata.get("description", "")).strip()
+          if not title or title.upper() == "REPLACE ME":
+              raise RuntimeError("metadata.json title is still a placeholder")
+          if not description or description.upper() == "REPLACE ME":
+              raise RuntimeError("metadata.json description is still a placeholder")
+
+          import os
+          path = os.environ["INPUT_VIDEO"]
           probe = json.loads(subprocess.check_output([
               "ffprobe", "-v", "error",
               "-select_streams", "v:0",
@@ -83,7 +104,7 @@ jobs:
           set -euo pipefail
           mkdir -p output
 
-          INPUT="inbox/short.mp4"
+          INPUT="$INPUT_VIDEO"
           MUSIC="assets/music/background.mp3"
           OUTPUT="output/short_with_music.mp4"
 
